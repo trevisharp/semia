@@ -1,10 +1,13 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Linq;
 using System.Windows.Forms;
 
-const int SimulTicksPerFrame = 1;
+const int SimulTicksPerFrame = 40;
 
+float total = 0;
 List<PhysicalObject> objs = [];
 
 #region Basic Setup
@@ -64,10 +67,7 @@ Application.Run(form);
 
 void Start()
 {
-    objs.AddRange(CreateObject(900, 400, 50));
-
-    objs.Add(new Ground
-    {
+    objs.Add(new Ground {
         X = 0,
         Y = form.Height - 20,
         Width = form.Width,
@@ -78,6 +78,17 @@ void Start()
 
 void Simulate(float dt)
 {
+    total += dt;
+    if (total > 0.1f)
+    {
+        total = 0;
+        AddStar(Cursor.Position);
+        AddStar(Cursor.Position);
+        AddStar(Cursor.Position);
+    }
+
+    objs.RemoveAll(x => x.Dead);
+    
     foreach (var obj in objs)
         obj.Interact(dt);
     
@@ -91,58 +102,49 @@ void Draw(Graphics g)
         obj.Draw(g);
 }
 
-List<PhysicalObject> CreateObject(float x, float y, float size)
+void AddStar(PointF point)
 {
-    var m1 = new Mass {
-        X = x - size / 2,
-        Y = y - size / 2
-    };
-    var m2 = new Mass {
-        X = x + size / 2,
-        Y = y - size / 2
-    };
-    var m3 = new Mass {
-        X = x - size / 2,
-        Y = y + size / 2
-    };
-    var m4 = new Mass {
-        X = x + size / 2,
-        Y = y + size / 2
-    };
+    var brush = new LinearGradientBrush(
+        new PointF(form.Width / 2, 0),
+        new PointF(form.Width / 2, form.Height),
+        Color.Purple,
+        Color.Orange
+    );
 
-    var s1 = new Spring {
-        MassA = m1,
-        MassB = m2,
-        K = 100,
-        Size = size
-    };
+    objs.AddRange(
+        [ .. 
+            Creator.StableStar(
+                point.X, point.Y, 
+                5 + 10 * Random.Shared.NextSingle(), 
+                1_000_000
+            )
+            .AddSprite((objs, g) =>
+            {
+                var points = objs
+                    .Where(obj => obj is Mass mass && !mass.Internal)
+                    .Select(obj => (Mass)obj)
+                    .Select(m => new PointF(m.X, m.Y));
 
-    var s2 = new Spring {
-        MassA = m2,
-        MassB = m3,
-        K = 100,
-        Size = size
-    };
-
-    var s3 = new Spring {
-        MassA = m3,
-        MassB = m4,
-        K = 100,
-        Size = size
-    };
-
-    var s4 = new Spring {
-        MassA = m4,
-        MassB = m1,
-        K = 100,
-        Size = size
-    };
-
-    return [ m1, m2, m3, m4, s1, s2, s3, s4 ];
+                g.FillPolygon(brush, [ ..points ]);
+            })
+            .AddBehaviour((objs, dt, total) =>
+            {
+                if (total < 5f)
+                    return;
+                
+                foreach (var obj in objs)
+                    obj.Dead = true;
+            })
+        ]
+    );
 }
 
 public abstract class PhysicalObject
 {
+    public bool Visible { get; set; } = true;
+    public bool Physical { get; set; } = true;
+    public bool Dead { get; set; } = false;
+
     public abstract void Draw(Graphics g);
     public abstract void Interact(float dt);
     public abstract void Move(float dt);
@@ -160,9 +162,13 @@ public class Mass : PhysicalObject
     public float Fy { get; set; }
 
     public float Weight { get; set; } = 1;
+    public bool Internal { get; set; } = false;
 
     public override void Draw(Graphics g)
     {
+        if (!Visible)
+            return;
+        
         g.FillEllipse(
             Brushes.WhiteSmoke,
             X - 4, Y - 4, 8, 8
@@ -170,7 +176,7 @@ public class Mass : PhysicalObject
     }
 
     public override void Interact(float dt)
-        => Fy += Weight * 98f;
+        => Fy += Weight * 500f;
 
     public override void Move(float dt)
     {
@@ -193,6 +199,9 @@ public class Spring : PhysicalObject
 
     public override void Draw(Graphics g)
     {
+        if (!Visible)
+            return;
+        
         g.DrawLine(
             Pens.Red,
             MassA.X, MassA.Y,
@@ -209,7 +218,7 @@ public class Spring : PhysicalObject
         var ny = dy / size;
 
         var delta = Size - size;
-        var force = K * delta;
+        var force = K * delta / 50;
         var fx = force * nx;
         var fy = force * ny;
 
@@ -225,6 +234,8 @@ public class Spring : PhysicalObject
 
 public class Ground : PhysicalObject
 {
+    readonly Dictionary<Mass, int> contactMap = [];
+
     public float X { get; set; }
     public float Y { get; set; }
     public float Width { get; set; }
@@ -233,6 +244,9 @@ public class Ground : PhysicalObject
 
     public override void Draw(Graphics g)
     {
+        if (!Visible)
+            return;
+        
         g.FillRectangle(Brushes.Gray, X, Y, Width, Height);
         g.DrawRectangle(Pens.Black, X, Y, Width, Height);
     }
@@ -244,13 +258,204 @@ public class Ground : PhysicalObject
             if (obj is not Mass mass)
                 continue;
             
+            if (!mass.Physical)
+                continue;
+            
             if (mass.Y < Y)
                 continue;
             
-            mass.Y = -(Y - mass.Y);
-            mass.Sy *= -1;
+            mass.Y = Y;
+            mass.Sy *= -0.8f;
+
+            if (!contactMap.TryAdd(mass, 1))
+                contactMap[mass]++;
         }
     }
 
     public override void Move(float dt) { }
+}
+
+public class Sprite : PhysicalObject
+{
+    public Action<Graphics>? OnDraw;
+
+    public override void Draw(Graphics g)
+    {
+        if (!Visible)
+            return;
+        
+        OnDraw?.Invoke(g);
+    }
+
+    public override void Interact(float dt) { }
+
+    public override void Move(float dt) { }
+}
+
+public class Ticker : PhysicalObject
+{
+    float total = 0;
+    public event Action<float, float>? OnTick;
+
+    public override void Draw(Graphics g) { }
+
+    public override void Interact(float dt)
+    {
+        total += dt;
+        OnTick?.Invoke(dt, total);
+    }
+
+    public override void Move(float dt) { }
+}
+
+public static class PhysicalObjectExtension
+{
+    public static float Distance(this Mass mass, Mass other)
+    {
+        var dx = mass.X - other.X;
+        var dy = mass.Y - other.Y;
+        return float.Sqrt(dx * dx + dy * dy);
+    }
+
+    public static (float x, float y) UnitVec(this Mass mass, Mass other)
+    {
+        var dx = other.X - mass.X;
+        var dy = other.Y - mass.Y;
+        var mod = float.Sqrt(dx * dx + dy * dy);
+        return (dx / mod, dy / mod);
+    }
+
+    public static Spring Connect(this Mass mass, Mass other, float K)
+        => new() {
+            K = K,
+            MassA = mass,
+            MassB = other,
+            Size = mass.Distance(other)
+        };
+
+    public static IEnumerable<PhysicalObject> ConvexConnect(
+        this IEnumerable<Mass> masses, float springK
+    )
+    {
+        foreach (var mass in masses)
+        {
+            yield return mass;
+            
+            foreach (var other in masses)
+            {
+                if (mass == other)
+                    continue;
+                
+                yield return mass.Connect(other, springK);
+            }
+        }
+    }
+
+    public static IEnumerable<PhysicalObject> AddSprite(
+        this IEnumerable<PhysicalObject> objs,
+        Action<IEnumerable<PhysicalObject>, Graphics> onDraw)
+    {
+        var copy = objs.ToArray();
+        foreach (var obj in copy)
+        {
+            obj.Visible = false;
+            yield return obj;
+        }
+
+        var sprite = new Sprite();
+        sprite.OnDraw += g => onDraw(copy, g);
+        yield return sprite;
+    }
+
+    public static IEnumerable<PhysicalObject> AddBehaviour(
+        this IEnumerable<PhysicalObject> objs,
+        Action<IEnumerable<PhysicalObject>, float, float> behaviour
+    )
+    {
+        var copy = objs.ToArray();
+        foreach (var obj in copy)
+            yield return obj;
+
+        var ticker = new Ticker();
+        ticker.OnTick += (dt, total) => behaviour(copy, dt, total);
+        yield return ticker;
+    }
+}
+
+public static class Creator
+{
+    public static IEnumerable<Mass> Polygon(
+        float xcenter, float ycenter,
+        float radius, int sides
+    )
+    {
+        List<Mass> masses = [];
+        var theta = Random.Shared.NextSingle();
+        var dtheta = MathF.Tau / sides;
+        
+        for (int i = 0; i < sides; i++)
+        {
+            masses.Add(new Mass
+            {
+                Weight = 1,
+                X = xcenter + MathF.Cos(theta) * radius,
+                Y = ycenter + MathF.Sin(theta) * radius
+            });
+            theta += dtheta;
+        }
+
+        return masses;
+    }
+
+    public static IEnumerable<PhysicalObject> StableStar(
+        float xcenter, float ycenter,
+        float radius, int springK
+    )
+    {
+        var center = 
+            Polygon(xcenter, ycenter, radius, 10)
+            .ToArray();
+
+        center[0].Sx = (Random.Shared.NextSingle() - 0.5f) * 5_000;
+
+        var sy = - Random.Shared.NextSingle() * 500;
+        foreach (var mass in center)
+            mass.Sy = sy;
+        
+        var springs = center
+            .ConvexConnect(springK)
+            .Where(b => b is Spring)
+            .ToArray();
+        
+        foreach (var spring in springs)
+            yield return spring;
+
+        for (int i = 0; i < 5; i++)
+        {
+            var m1 = center[2 * i];
+            var m2 = center[2 * i + 1];
+            var index = 2 * i + 2 >= center.Length
+                ? 0 : 2 * i + 2; 
+            var m3 = center[index];
+
+            m2.Internal = true;
+
+            var (ux, uy) = m1.UnitVec(m3);
+            var m4 = new Mass {
+                X = m2.X + uy * radius,
+                Y = m2.Y - ux * radius,
+                Weight = 1
+            };
+
+            List<Mass> subStar = [ m1, m2, m3, m4 ];
+            var stableSubStar = subStar.ConvexConnect(springK);
+            foreach (var spring in stableSubStar.Where(b => b is Spring))
+                yield return spring;
+            
+
+            yield return m1;
+            yield return m2;
+            yield return m4;
+        }
+    }
 }
