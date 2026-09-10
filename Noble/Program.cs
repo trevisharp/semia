@@ -2,9 +2,9 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-const float m = 0.1f;
+const float m = 0.01f;
 
-const int N1 = 2;
+const int N1 = 5000;
 const float T1 = 0.1f;
 
 const int N2 = 5 * N1;
@@ -101,10 +101,7 @@ Application.Run(form);
 
 #endregion
 
-void Start()
-{
-    
-}
+void Start() { }
 
 void Simulate(float dt)
 {
@@ -138,16 +135,32 @@ void Simulate(float dt)
         if (k < N1 && x[k] > wx)
         {
             x[k] = 2 * wx - x[k];
-            // Conservação do momento
-            wdx += 2 * dx[k] * m / wm;
-            dx[k] *= -1;
+
+            var vp = 
+                (m - wm) / (m + wm) * dx[k] 
+                + 2 * wm / (m + wm) * wdx;
+            
+            var vw = 
+                (wm - m) / (m + wm) * wdx 
+                + 2 * m / (m + wm) * dx[k];
+            
+            dx[k] = vp;
+            wdx = vw;
         }
         else if (k >= N1 && x[k] < wx)
         {
             x[k] = 2 * wx - x[k];
-            // Conservação do momento
-            wdx += 2 * dx[k] * m / wm;
-            dx[k] *= -1;
+
+            var vp = 
+                (m - wm) / (m + wm) * dx[k] 
+                + 2 * wm / (m + wm) * wdx;
+            
+            var vw = 
+                (wm - m) / (m + wm) * wdx 
+                + 2 * m / (m + wm) * dx[k];
+            
+            dx[k] = vp;
+            wdx = vw;
         }
     }
 
@@ -172,9 +185,16 @@ void Draw(Graphics g)
     var array = new int[2 * Frames * Frames];
     for (int k = 0; k < x.Length; k++)
     {
-        var i = (int)(Frames * x[k]);
-        var j = (int)(Frames * y[k]);
-        array[i + j * 2 * Frames]++;
+        var i = int.Clamp(
+            (int)(Frames * x[k]),
+            0, 2 * Frames - 1
+        );
+        var j = int.Clamp(
+            (int)(Frames * y[k]),
+            0, Frames - 1
+        );
+        var index = i + j * 2 * Frames;
+        array[index]++;
     }
 
     var a = size / Frames;
@@ -202,5 +222,20 @@ void Draw(Graphics g)
     g.DrawLine(Pens.Black, 
         wallPos, rect.Y,
         wallPos, rect.Y + rect.Height
+    );
+
+    var Vr = wx;
+    var Vb = 2f - wx;
+
+    g.DrawString(
+        $"""
+                    Gas V   Gas B
+        Volume  {MathF.Round(Vr, 3)}    {MathF.Round(Vb, 3)}
+        Massa   {MathF.Round(N1 * m, 3)}    {MathF.Round(N2 * m, 3)}
+        Temp    {MathF.Round(T1, 3)}    {MathF.Round(T2, 3)}
+        """, 
+        SystemFonts.MenuFont!, 
+        Brushes.White, 
+        Point.Empty
     );
 }
