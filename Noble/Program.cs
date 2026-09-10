@@ -1,6 +1,8 @@
 using System;
+using System.Linq;
 using System.Drawing;
 using System.Windows.Forms;
+using System.Collections.Generic;
 
 const float m = 0.01f;
 
@@ -25,6 +27,9 @@ const float wm = 10f;
 
 var v1 = float.Sqrt(2 * T1 / (N1 * m));
 var v2 = float.Sqrt(2 * T2 / (N2 * m));
+
+var Prq = new Queue<float>();
+var Pbq = new Queue<float>();
 
 for (int k = 0; k < N1; k++)
 {
@@ -105,6 +110,9 @@ void Start() { }
 
 void Simulate(float dt)
 {
+    var pr = 0f;
+    var pb = 0f;
+
     for (int k = 0; k < N1 + N2; k++)
     {
         x[k] += dx[k] * dt;
@@ -144,6 +152,9 @@ void Simulate(float dt)
                 (wm - m) / (m + wm) * wdx 
                 + 2 * m / (m + wm) * dx[k];
             
+            var force = (wdx - vw) / dt / wm;
+            pr += force;
+            
             dx[k] = vp;
             wdx = vw;
         }
@@ -159,10 +170,21 @@ void Simulate(float dt)
                 (wm - m) / (m + wm) * wdx 
                 + 2 * m / (m + wm) * dx[k];
             
+            var force = (wdx - vw) / dt / wm;
+            pb += force;
+            
             dx[k] = vp;
             wdx = vw;
         }
     }
+
+    Prq.Enqueue(pr);
+    if (Prq.Count > 10)
+        Prq.Dequeue();
+    
+    Pbq.Enqueue(pb);
+    if (Pbq.Count > 10)
+        Pbq.Dequeue();
 
     wx += wdx * dt;
 }
@@ -229,11 +251,12 @@ void Draw(Graphics g)
 
     g.DrawString(
         $"""
-                    Gas V   Gas B
-        Volume  {MathF.Round(Vr, 3)}    {MathF.Round(Vb, 3)}
-        Massa   {MathF.Round(N1 * m, 3)}    {MathF.Round(N2 * m, 3)}
-        Temp    {MathF.Round(T1, 3)}    {MathF.Round(T2, 3)}
-        """, 
+                    Gas V   Gas A
+        Volume  {1000 * Vr:000}    {1000 * Vb:000}
+        Massa   {1000 * N1 * m:000}    {1000 * N2 * m:000}
+        Temp    {1000 * T1, 3:000}    {1000 * T2, 3:000}
+        Pressao {1000 * 100 * Prq.Average():000}    {1000 * 100 * Pbq.Average():000}
+        """,
         SystemFonts.MenuFont!, 
         Brushes.White, 
         Point.Empty
