@@ -2,15 +2,17 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-const int N1 = 5000;
-const int N2 = 5000;
-const float T1 = 10f;
-const float T2 = 10f;
-const float m = 0.01f;
+const float m = 0.1f;
 
-const int ConcFrameImpact = 50;
-const int Frames = 50;
-const int SimulTicksPerFrame = 10;
+const int N1 = 2;
+const float T1 = 0.1f;
+
+const int N2 = 5 * N1;
+const float T2 = T1 / 10;
+
+const int ConcFrameImpact = 55;
+const int Frames = 100;
+const int SimulTicksPerFrame = 20;
 
 var x = new float[N1 + N2];
 var y = new float[N1 + N2];
@@ -19,8 +21,8 @@ var dy = new float[N1 + N2];
 
 var wx = 1f;
 var wdx = 0f;
+const float wm = 10f;
 
-// T \approx m * v^2 / 2 --> v \approx sqrt(2 T / m)
 var v1 = float.Sqrt(2 * T1 / (N1 * m));
 var v2 = float.Sqrt(2 * T2 / (N2 * m));
 
@@ -106,7 +108,50 @@ void Start()
 
 void Simulate(float dt)
 {
-    
+    for (int k = 0; k < N1 + N2; k++)
+    {
+        x[k] += dx[k] * dt;
+        y[k] += dy[k] * dt;
+
+        if (x[k] < 0f)
+        {
+            x[k] *= -1;
+            dx[k] *= -1;
+        }
+        else if (x[k] > 2f)
+        {
+            x[k] = 4f - x[k];
+            dx[k] *= -1;
+        }
+        
+        if (y[k] < 0f)
+        {
+            y[k] *= -1;
+            dy[k] *= -1;
+        }
+        else if (y[k] > 1f)
+        {
+            y[k] = 2f - y[k];
+            dy[k] *= -1;
+        }
+
+        if (k < N1 && x[k] > wx)
+        {
+            x[k] = 2 * wx - x[k];
+            // Conservação do momento
+            wdx += 2 * dx[k] * m / wm;
+            dx[k] *= -1;
+        }
+        else if (k >= N1 && x[k] < wx)
+        {
+            x[k] = 2 * wx - x[k];
+            // Conservação do momento
+            wdx += 2 * dx[k] * m / wm;
+            dx[k] *= -1;
+        }
+    }
+
+    wx += wdx * dt;
 }
 
 void Draw(Graphics g)
@@ -152,4 +197,10 @@ void Draw(Graphics g)
                 a, a
             );
         }
+    
+    var wallPos = rect.X + size * wx;
+    g.DrawLine(Pens.Black, 
+        wallPos, rect.Y,
+        wallPos, rect.Y + rect.Height
+    );
 }
